@@ -1,0 +1,130 @@
+SELECT customer_id,join_date FROM members;
+
+select * from menu;
+
+select * from sales;
+
+
+--QUESTION1:What is the total amount each customer spent at the restaurant?
+select customer_id, sum(price) 
+from sales as s
+left join menu as m
+on s.product_id = m.product_id
+group by s.customer_id
+order by customer_id;
+
+--QUESTION 2: How many days has each customer visited the restaurant?
+select customer_id, count(distinct order_date) as days_spent 
+from sales 
+group by customer_id
+order by customer_id;
+
+--QUESTION 3: What was the first item from the menu purchased by each customer?
+with first_item as (
+Select customer_id,
+order_date,
+product_name,
+dense_rank () over(partition by customer_id order by order_date) as rank
+from sales as s
+join menu as m
+on s.product_id = m.product_id)
+ 
+ select customer_id, product_name from first_item where rank = 1 group by customer_id,product_name
+
+--Question 4: What is the most purchased item on the menu and how many times was it purchased by all customers?
+select s.product_id,
+product_name,
+count(s.product_id) as total_sales
+from sales as s
+left join menu as m 
+on s.product_id = m.product_id
+group by s.product_id,product_name
+order by total_sales desc
+limit 1;
+
+--Question 5: Which item was the most popular for each customer?
+with total_sales as (
+select customer_id customer,
+m.product_name product,
+count(s.product_id) as product_sales,
+rank() over (partition by customer_id order by count(s.product_id) desc) as rank
+from sales as s
+join menu as m
+on s.product_id = m.product_id
+group by customer_id,m.product_name
+order by customer_id,m.product_name )
+
+select customer, 
+product, 
+product_sales 
+from total_sales 
+where rank = 1
+group by customer,product,product_sales;
+
+--Question 6: Which item was purchased first by the customer after they became a member?
+with first_purchase as (select s.customer_id, s.order_date, product_name,
+rank() over(partition by s.customer_id order by s.order_date)
+from sales s 
+join menu m on s.product_id = m.product_id 
+left join members ms on s.customer_id = ms.customer_id
+where s.order_date >= ms.join_date
+group by s.customer_id, s.order_date,product_name
+order by s.customer_id,s.order_date)
+
+select customer_id, order_date,product_name from first_purchase where rank = 1;
+
+--Question 7:Which item was purchased just before the customer became a member?
+select s.customer_id, s.order_date, product_name,
+rank() over(partition by s.customer_id order by s.order_date)
+from sales s 
+join menu m on s.product_id = m.product_id 
+left join members ms on s.customer_id = ms.customer_id
+where s.order_date < ms.join_date
+group by s.customer_id, s.order_date,product_name
+order by s.customer_id,s.order_date ;
+
+
+--Question 8: What is the total items and amount spent for each member before they became a member?
+select ID, count(product),sum(total)
+from (select s.customer_id ID, product_name product,count(s.product_id) as quantity,price, count(s.product_id)*price as total from sales s 
+join menu m  on s.product_id = m.product_id
+join members mm on s.customer_id = mm.customer_id
+where s.order_date < mm.join_date
+group by s.customer_id,product_name,price
+order by s.customer_id) as info
+group by ID;
+
+--Question 9: If each $1 spent equates to 10 points and sushi has a 2x points multiplier - how many points would each customer have?
+with points as (select 
+customer_id,product_name,count(s.product_id) total_p,price,
+(case when product_name = 'sushi' then 20 else 10 end ) as points
+from sales s 
+join menu m on s.product_id = m.product_id
+group by customer_id,price,product_name
+order by customer_id)
+
+select customer_id,sum(total_p*(price*points)) from points group by customer_id;
+
+/*Question 10: In the first week after a customer joins the program (including their join date) they earn 2x points on all items, 
+not just sushi - how many points do customer A and B have at the end of January? */
+WITH dates_cte AS 
+(
+ SELECT *, 
+join_date + INTERVAL '6 day' AS valid_date, 
+ (date_trunc('month',date '2021-01-31' ) + interval '1 month - 1 day')::date as last_date
+ FROM members AS m
+)
+SELECT d.customer_id, s.order_date, d.join_date, 
+ d.valid_date, d.last_date, m.product_name, m.price,
+ SUM(CASE
+  WHEN m.product_name = 'sushi' THEN 2 * 10 * m.price
+  WHEN s.order_date BETWEEN d.join_date AND d.valid_date THEN 2 * 10 * m.price
+  ELSE 10 * m.price
+  END) AS points
+FROM dates_cte AS d
+JOIN sales AS s
+ ON d.customer_id = s.customer_id
+JOIN menu AS m
+ ON s.product_id = m.product_id
+WHERE s.order_date < d.last_date
+GROUP BY d.customer_id, s.order_date, d.join_date, d.valid_date, d.last_date, m.product_name, m.price
